@@ -360,7 +360,7 @@ function main(){
     uniforms.projection = projection;
     uniforms.u_time = time / 20000;
     uniforms.u_mouse = [mousePos.x, mousePos.y];
-    uniforms.u_resolution = [gl.canvas.width, gl.canvas.height];
+    uniforms.u_resolution = [2500,2500], //[gl.canvas.width, gl.canvas.height];
     //uniforms.u_direction = [mousePos.x, mousePos.y];
     //uniforms.u_depth = Math.sin(time/200) * 100 //wobbly mountains
 
