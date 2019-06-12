@@ -1,21 +1,22 @@
 // vertex shader
 vs = `
-precision mediump float;
-attribute vec3 position;
-attribute vec3 normals;
-attribute vec2 texcoord;
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
-uniform float u_time;
-uniform vec2 u_resolution;
-uniform float u_depth;
-uniform float u_scale;
-uniform vec2 u_mouse;
-uniform float u_seed;
-varying vec3 normal;
-varying vec3 FragPos;
-varying vec2 v_texCoord;
+precision highp float;
+attribute mediump vec3 position;
+attribute mediump vec3 normals;
+attribute mediump vec2 texcoord;
+uniform mediump mat4 model;
+uniform mediump mat4 view;
+uniform mediump mat4 projection;
+uniform mediump float u_time;
+uniform mediump vec2 u_resolution;
+uniform mediump vec2 u_direction;
+uniform mediump float u_depth;
+uniform mediump float u_scale;
+uniform mediump float u_seed;
+varying mediump vec3 v_normal;
+varying mediump vec3 v_fragPos;
+varying mediump vec2 v_texCoord;
+
 
 //
 // Description : Array and textureless GLSL 2D simplex noise function.
@@ -29,10 +30,6 @@ varying vec2 v_texCoord;
 //
 
 vec3 mod289(vec3 x){
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
-}
-
-vec2 mod289(vec2 x){
   return x - floor(x * (1.0 / 289.0)) * 289.0;
 }
 
@@ -51,17 +48,12 @@ float snoise(vec2 v){
 
 // Other corners
   vec2 i1;
-  //i1.x = step( x0.y, x0.x ); // x0.x > x0.y ? 1.0 : 0.0
-  //i1.y = 1.0 - i1.x;
   i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-  // x0 = x0 - 0.0 + 0.0 * C.xx ;
-  // x1 = x0 - i1 + 1.0 * C.xx ;
-  // x2 = x0 - 1.0 + 2.0 * C.xx ;
   vec4 x12 = x0.xyxy + C.xxzz;
   x12.xy -= i1;
 
 // Permutations
-  i = mod289(i); // Avoid truncation effects in permutation
+  i = i - floor(i * (1.0 / 289.0)) * 289.0; // Avoid truncation effects in permutation
   vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
     + i.x + vec3(0.0, i1.x, 1.0 ));
 
@@ -88,32 +80,34 @@ float snoise(vec2 v){
   return 130.0 * dot(m, g);
 }
 
-//---
+//--- End of Ashima Simplex noise
 
+
+float sinNoise(float t){
+  return sin( (position.x * position.z * 0.0001) + t * 10. );
+}
 
 void main(){
-  normal = normals;
-
+  v_normal = normals;
+  float aspect = u_resolution.x/u_resolution.y;
   vec2 uv = position.xz / u_resolution;
-  vec3 newPos = position;
+  vec4 newPos = vec4(position, 1.0);
 
-  float SCALEX = 20.0 * 1./u_scale;
-  float SCALEY = 20.0 * 1./u_scale;
+  float SCALEX = 5.0 * aspect * 1./u_scale;
+  float SCALEY = 5.0 * 1./u_scale;
 
-  float t = u_time * -0.00004;
-  float dirX = 0.; //sin(t);//-t;
-  float dirY = -t;
+  float dirX = u_direction.x * u_time; //sin(t);//-t;
+  float dirY = u_direction.y * u_time;
 
-  float yPos = 0.;
-  float noise =  (snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY )) + 1.0) / 2.0;
-  float noise2 = (snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY ) * 5.) + 1.0) / 2.0;
-  yPos = mix(noise, noise2, 0.08);
-  //yPos = noise;
+  float noise1 = snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY ));
+  float noise2 = snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY ) * 3.);
+  float yPos = mix(noise1, noise2, 0.2);
 
-  newPos.y = yPos * u_depth; //sin(position.x * position.z * u_time * 0.000001) * 2.;
-  FragPos = vec3(model * vec4(newPos, 1.0));
+  newPos.y = yPos * u_depth; //
+  //newPos.y = sinNoise(u_time) * u_depth; //debug
+  v_fragPos = vec3(model * newPos); //vec3(model * vec4(newPos, 1.0));
   v_texCoord = texcoord;
-  gl_Position = projection * view * model * vec4(newPos, 1.0);
+  gl_Position = projection * view * model * newPos;
 }
 `;
 
@@ -129,12 +123,11 @@ uniform float u_specularIntensity;
 uniform vec3 u_ambientLightColor;
 uniform vec3 u_lightColor;
 uniform vec2 u_resolution;
-uniform float u_time;
 uniform sampler2D u_noise;
 uniform float u_depth;
 uniform vec2 u_mouse;
-varying vec3 normal;
-varying vec3 FragPos;
+varying vec3 v_normal;
+varying vec3 v_fragPos;
 varying vec2 v_texCoord;
 
 
@@ -150,10 +143,7 @@ vec3 hsv2rgb(vec3 c){
 }
 
 float getDepth(float n, float cutoff, float steps){
-  //remap remaining non-cutoff region to 0 - 1
-  float d = (n - cutoff) / (1. - cutoff);
-
-  //step
+  float d = (n-cutoff)/(1.-cutoff);
   d = floor(d*steps)/steps;
   return d;
 }
@@ -164,30 +154,29 @@ float mapRange(float val, float low1, float high1, float low2, float high2){
 
 void main(){
   vec2 uv = gl_FragCoord.xy / u_resolution;
-  float yPos = FragPos.y / u_depth; //y position in 0..1 range
+  float yPos = v_fragPos.y / u_depth; //y position in 0..1 range
   vec3 lightColor = u_lightColor;
   vec3 ambientLightColor = u_ambientLightColor;
 
   // Slice hills into layers
-  const int steps = 40; //number of layers
-  const int skip = 6; //for n layer, do something
+  const int steps = 3; //number of layers
   const int offset = 0; //start counting n layers with an offset
 
-  // Calc pixel color
-  float h = 0.68 + getDepth(yPos, 0.0, float(steps)) * 0.28;
+  // Set pixel color
+  float h = 0.0; //0.68 + getDepth(yPos, 0.0, float(steps)) * 0.28;
   float s = 0.0;
-  float v = 0.; //yPos; //floor(sin(yPos * 3.) + 0.2);
+  float v = 0.0;
 
   float d = getDepth(yPos, 0.0, float(steps));
-  const float thickness = 0.1; //for making simple gradients
+  const float thickness = 0.08; //for making simple gradients
 
-  for (int i = 0; i<steps; i+=skip){
-    float val = float(mod(float(i + offset), float(steps)))/float(steps);
+  for (int i = offset; i<steps; i++){
+    float val = float(float(i))/float(steps);
 
     if (yPos <= val && yPos > val - thickness){
-      v += mapRange(yPos, val - thickness, val, 0.0, 0.62); // gradient falloff
-      //v = d;
-      //s = 0.8;
+      v += mapRange(yPos, val - thickness, val, 0.0, 0.7); // gradient falloff
+      //h = d * 0.8 + 0.1;
+      //s = 0.3;
     }
 
     // //Inverse
@@ -196,43 +185,52 @@ void main(){
     // }
 
     // // Thin solid line
-    if (yPos <= val && yPos > val - 0.005){
+    if (yPos <= val && yPos > val - 0.003){
       v = 1.;
-      //s = 0.8;
     }
   }
 
+// Pre-lighting noise
   // Add noise and clamp values
-  v *= floor((whiteNoise(uv) * v) + 0.5);
+  v *= floor((whiteNoise(uv) * v) + 0.85);
+  v += floor( (whiteNoise(uv * 3.) + 0.4) * floor(v + 0.9) );
   v = clamp(v, 0.0, 1.0);
 
   // Add lighting
   vec3 ambient = u_ambientIntensity * ambientLightColor;
   vec3 lightPos = u_lightPos;
 
-  vec3 norm = normalize(normal);
-  vec3 lightDir = normalize(lightPos - FragPos);
-  float diffImpact = max(dot(norm, lightDir), 0.0);
-  vec3 diffuseLight = diffImpact * lightColor;
+  vec3 normalized = normalize(v_normal);
+  vec3 lightDirection = normalize(lightPos - v_fragPos);
+  vec3 diffuse = max(dot(normalized, lightDirection), 0.0) * lightColor;
 
-  vec3 viewPos = vec3(-u_mouse.x * u_resolution.x/5., -500.0, u_mouse.y * u_resolution.y/5.); //set light origin
-  vec3 viewDir = normalize(viewPos - FragPos);
-  vec3 reflectDir = reflect(-lightDir, norm);
+  vec3 position = vec3(-u_mouse.x * u_resolution.x/5., -500.0, u_mouse.y * u_resolution.y/5.); //set light origin
+  vec3 viewDirection = normalize(position - v_fragPos);
+  vec3 reflectionDirection = reflect(-lightDirection, normalized);
 
-  float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.);
+  float spec = pow(max(dot(viewDirection, reflectionDirection), 0.0), 4.);
   vec3 specular = u_specularIntensity * spec * lightColor;
 
-  vec3 lighting = diffuseLight + ambient + specular;
+  vec3 lighting = diffuse + ambient + specular;
 
   // Set diffuse color
   vec3 diffuseColor = hsv2rgb(vec3(h, s, v));
-  vec3 col = diffuseColor * lighting;
+  vec3 col = diffuseColor * lighting; //add lighting
+  //vec3 col = diffuseColor;
 
+// Post-lighting noise
+  // Add noise and clamp values
+  //col = floor((whiteNoise(uv) * v) + col + 0.4); //mono noise
+  //col *= floor((whiteNoise(uv) * v) + 0.85); //grey noise
+  //col +=  (whiteNoise(uv * 3.) + 0.4) * floor(col + 0.8) * 0.2; //second layer
+  //col = clamp(col, 0.0, 1.0);
 
   // Add vertical gradient
-  //col *= 0.05 + (gl_FragCoord.y/u_resolution.y) * 0.95;
+  col *= 0.35 + uv.y * 0.65;
 
-  gl_FragColor = vec4(col, v);
+  vec4 finalColor = vec4(col, 1.0);
+  //finalColor += vec4(1.0, (1.-yPos), (1.-yPos) * 0.4, 1.0); //debug override
+  gl_FragColor = finalColor;
 }
 `;
 
@@ -258,36 +256,21 @@ function getNoPaddingNoBorderCanvasRelativeMousePosition(event, target) {
   return pos;
 }
 
-// resize canvas
-function resize(canvas) {
-  // Lookup the size the browser is displaying the canvas.
-  var displayWidth  = canvas.clientWidth;
-  var displayHeight = canvas.clientHeight;
 
-  // Check if the canvas is not the same size.
-  if (canvas.width  !== displayWidth ||
-      canvas.height !== displayHeight) {
+// Initialize WebGL
+let mousePos = {x: 0, y: 0.5};
 
-    // Make the canvas the same size
-    canvas.width  = displayWidth;
-    canvas.height = displayHeight;
-  }
-}
-
-
-// init webgl
-let mousePos = {x: 0, y: 0};
-
-function main(image){
+function main(){
   const m4 = twgl.m4;
-  const gl = document.getElementById("c").getContext("webgl");
+  const gl = document.getElementById("c").getContext("webgl", {alpha: false});
   const shader = twgl.createProgramInfo(gl, [vs, fs]);
 
   const vertices = 256;
   const offset = 0; //(vertices - 1) / 2;
+  const stretchX = 2.2;
+  const stretchY = 2.6;
   const strips = vertices - 1;
   const strip_length = vertices * 2;
-
 
   let position = [];
   let normal = [];
@@ -297,7 +280,7 @@ function main(image){
   for(let x = 0; x < vertices; x++) {
     for(let z = 0; z < vertices; z++) {
       //arrays.position.push(x - offset, ctx.getImageData(x, z, 1, 1).data[0] / z_compression, z - offset);
-      position.push((x * aspect) - (vertices * aspect)/2, 0, z - vertices/2);
+      position.push((x * aspect * stretchX) - (vertices * stretchX * aspect)/2, 0, (z * stretchY) - (vertices * stretchY)/2);
       normal.push(0, 0, 1);
     }
   }
@@ -317,9 +300,9 @@ function main(image){
   }
 
   const arrays = {
-    position: { numComponents: 3, data: position},
-    normal: { numComponents: 3, data: normal},
-    indices: { numComponents: 1, data: indices}
+    position: { numComponents: 3, data: position },
+    normal: { numComponents: 3, data: normal },
+    indices: { numComponents: 1, data: indices }
   };
 
   const buffers = twgl.createBufferInfoFromArrays(gl, arrays);
@@ -332,69 +315,66 @@ function main(image){
     model: [],
     view: [],
     projection: [],
-    u_lightPos: [0, 200, 0],
-    u_lightColor: [1, 1, 1],//[0.5, 0.1, 0.0],
-    u_ambientLightColor: [1, 1, 1],//[0.5, 0.4, 0.5],
-    u_ambientIntensity: 0.2,
-    u_specularIntensity: 0.5,
-    u_time: 0,
-    u_resolution: [gl.canvas.width, gl.canvas.height],
-    u_noise: textures.noise,
-    u_mouse: [mousePos.x, mousePos.y],
-    u_depth: 70,
-    u_scale: 1.0,
-    u_seed: Math.random()
+    u_lightPos: [0, 200, 0], //origin of spotlight
+    u_lightColor: [1, 1, 1], //color of spotlight
+    u_ambientLightColor: [1, 1, 1], //ambient light color
+    u_ambientIntensity: 0.4, //ambient light intensity
+    u_specularIntensity: 0.5, //specular intensity of spotlight
+    u_time: 0, //time
+    u_resolution: [gl.canvas.width, gl.canvas.height], //canvas resolution
+    u_direction: [0.0, 1.0], //direction of movement
+    u_noise: textures.noise, //static noise texture
+    u_mouse: [mousePos.x, mousePos.y], //mouse position, could also use for IMU on mobile
+    u_depth: 70, //how tall are the mountains
+    u_scale: 1., //scale of the simplex noise
+    u_seed: Math.random() //noise seed
   };
 
-  gl.clearColor(.0, .0, .0, 1);
+  gl.clearColor(0, 0, 0, 1);
 
   function render(time) {
     twgl.resizeCanvasToDisplaySize(gl.canvas, window.devicePixelRatio);
-
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-    gl.frontFace(gl.CW); // Apparently I draw triangles backwards
-    gl.enable(gl.u_DEPTH_TEST);
-    gl.enable(gl.CULL_FACE);
-    //gl.clear(gl.COLOR_BUFFER_BIT | gl.u_DEPTH_BUFFER_BIT);
+    gl.frontFace(gl.CW);
+    //gl.enable(gl.DEPTH_TEST);
+    //gl.enable(gl.CULL_FACE);
+    //gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     //gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
     //gl.enable(gl.BLEND);
     //gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    let zoom = 23;
-    let fov = zoom * Math.PI / 130;
+    const zoom = 25; //camera zoom
+    const fov = zoom * Math.PI / 130;
     const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
-    const zNear = 0.1;
-    const zFar = vertices * 2000;
+    const zNear = 1;
+    const zFar = 10000;
     const projection = m4.perspective(fov, aspect, zNear, zFar);
 
-    const eye = [0, 350, -120];
-    const target = [0, 0, 0];
-    const up = [0, 1, 0];
+    const eye = [0, 500, -500]; //camera position
+    const target = [0, -125, 0];   //camera target
+    const up = [0, 1, 0];       //up direction
     const camera = m4.lookAt(eye, target, up);
 
     uniforms.view = m4.inverse(camera);
     uniforms.model = m4.identity();
     uniforms.projection = projection;
-    uniforms.u_time = time;
+    uniforms.u_time = time / 20000;
     uniforms.u_mouse = [mousePos.x, mousePos.y];
     uniforms.u_resolution = [gl.canvas.width, gl.canvas.height];
+    //uniforms.u_direction = [mousePos.x, mousePos.y];
+    //uniforms.u_depth = Math.sin(time/200) * 100 //wobbly mountains
 
     gl.useProgram(shader.program);
 
     twgl.setBuffersAndAttributes(gl, shader, buffers);
     twgl.setUniforms(shader, uniforms);
-    //twgl.drawBufferInfo(gl, gl.TRIANGLES, buffers);
-
-    gl.drawElements(gl.TRIANGLE_STRIP, buffers.numElements, gl.UNSIGNED_SHORT, 0);
+    twgl.drawBufferInfo(gl, gl.TRIANGLE_STRIP, buffers);
 
     requestAnimationFrame(render);
   }
 
   window.addEventListener('mousemove', e => {
     const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e, gl.canvas);
-
-    // pos is in pixel coordinates for the canvas.
-    // so convert to WebGL clip space coordinates
     const x = pos.x / gl.canvas.width  *  2 - 1;
     const y = pos.y / gl.canvas.height * -2 + 1;
 
@@ -406,42 +386,5 @@ function main(image){
   requestAnimationFrame(render);
 }
 
-/*
-const image = new Image;
-image.onload = () => {
-  main(image);
-}
-image.src = 'js/noise.png'
-*/
-
 main();
-
-/*
-function render(time) {
-  twgl.resizeCanvasToDisplaySize(gl.canvas, 1); //use window.devicePixelRatio if you want retina, we might not though...
-  gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-
-  const uniforms = {
-    u_time: time * 0.001,
-    u_resolution: [gl.canvas.width, gl.canvas.height],
-    u_mouse: [mousePos.x, mousePos.y],
-    u_texture: textures.noise,
-    u_ashima1: textures.ashima1,
-    u_ashima2: textures.ashima2
-  };
-
-  gl.useProgram(programInfo.program);
-  twgl.setBuffersAndAttributes(gl, programInfo, bufferInfo);
-  twgl.setUniforms(programInfo, uniforms);
-  twgl.drawBufferInfo(gl, bufferInfo);
-
-  requestAnimationFrame(render);
-}
-
-requestAnimationFrame(render);
-*/
-
-// attach listener for updating mouse position uniform
-
-
 
