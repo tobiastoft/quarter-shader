@@ -83,10 +83,6 @@ float snoise(vec2 v){
 //--- End of Ashima Simplex noise
 
 
-float sinNoise(float t){
-  return sin( (position.x * position.z * 0.0001) + t * 10. );
-}
-
 void main(){
   v_normal = normals;
   float aspect = u_resolution.x/u_resolution.y;
@@ -96,15 +92,15 @@ void main(){
   float SCALEX = 5.0 * aspect * 1./u_scale;
   float SCALEY = 5.0 * 1./u_scale;
 
-  float dirX = u_direction.x * u_time; //sin(t);//-t;
+  float dirX = u_direction.x * u_time;
   float dirY = u_direction.y * u_time;
 
   float noise1 = snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY ));
-  float noise2 = snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY ) * 3.);
+  //float noise2 = snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY ) * 3.); //synced
+  float noise2 = snoise( u_seed + vec2(uv.x * SCALEX + dirX, uv.y * SCALEY + dirY/3. ) * 3.); //wobbles
   float yPos = mix(noise1, noise2, 0.2);
 
-  newPos.y = yPos * u_depth; //
-  //newPos.y = sinNoise(u_time) * u_depth; //debug
+  newPos.y = yPos * u_depth;
   v_fragPos = vec3(model * newPos); //vec3(model * vec4(newPos, 1.0));
   v_texCoord = texcoord;
   gl_Position = projection * view * model * newPos;
@@ -216,7 +212,6 @@ void main(){
   // Set diffuse color
   vec3 diffuseColor = hsv2rgb(vec3(h, s, v));
   vec3 col = diffuseColor * lighting; //add lighting
-  //vec3 col = diffuseColor;
 
 // Post-lighting noise
   // Add noise and clamp values
@@ -256,6 +251,11 @@ function getNoPaddingNoBorderCanvasRelativeMousePosition(event, target) {
   return pos;
 }
 
+// this might not be totally reliable — taken from
+// https://coderwall.com/p/i817wa/one-line-function-to-detect-mobile-devices-with-javascripts
+function isMobileDevice() {
+    return (typeof window.orientation !== "undefined") || (navigator.userAgent.indexOf('IEMobile') !== -1);
+}
 
 // Initialize WebGL
 let mousePos = {x: 0, y: 0.5};
@@ -322,7 +322,7 @@ function main(){
     u_specularIntensity: 0.5, //specular intensity of spotlight
     u_time: 0, //time
     u_resolution: [gl.canvas.width, gl.canvas.height], //canvas resolution
-    u_direction: [0.0, 1.0], //direction of movement
+    u_direction: [0.0, -1.0], //direction of movement
     u_noise: textures.noise, //static noise texture
     u_mouse: [mousePos.x, mousePos.y], //mouse position, could also use for IMU on mobile
     u_depth: 70, //how tall are the mountains
@@ -333,7 +333,9 @@ function main(){
   gl.clearColor(0, 0, 0, 1);
 
   function render(time) {
-    twgl.resizeCanvasToDisplaySize(gl.canvas, window.devicePixelRatio);
+    const dpRatio = isMobileDevice() ? 1 : window.devicePixelRatio; // turns out retina on phones kinda looks janky
+
+    twgl.resizeCanvasToDisplaySize(gl.canvas, dpRatio);
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.frontFace(gl.CW);
     //gl.enable(gl.DEPTH_TEST);
@@ -343,26 +345,36 @@ function main(){
     //gl.enable(gl.BLEND);
     //gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    const zoom = 25; //camera zoom
+    const zoom = 30; //camera zoom
     const fov = zoom * Math.PI / 130;
     const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
-    const zNear = 1;
     const zFar = 10000;
+    const zNear = 1;
     const projection = m4.perspective(fov, aspect, zNear, zFar);
 
-    const eye = [0, 500, -500]; //camera position
-    const target = [0, -125, 0];   //camera target
-    const up = [0, 1, 0];       //up direction
+    const eye = [0, 500, -1]; //[0, 500, -500]; //camera position
+    const target = [0, 0, 0]; //[0, -125, 0];   //camera target
+    const up = [0, 1, 0];     //up direction
     const camera = m4.lookAt(eye, target, up);
 
+    //
+    // Wilson: Here's a good spot for the tweaking library to hook in
+    //
     uniforms.view = m4.inverse(camera);
     uniforms.model = m4.identity();
     uniforms.projection = projection;
-    uniforms.u_time = time / 20000;
-    uniforms.u_mouse = [mousePos.x, mousePos.y];
-    uniforms.u_resolution = [2500,2500], //[gl.canvas.width, gl.canvas.height];
-    //uniforms.u_direction = [mousePos.x, mousePos.y];
-    //uniforms.u_depth = Math.sin(time/200) * 100 //wobbly mountains
+    uniforms.u_time = time / 25000; // use to slow time up or down
+    uniforms.u_mouse = [mousePos.x, mousePos.y]; // mouse position in [-1 ,1] range
+    uniforms.u_resolution = [gl.canvas.width, gl.canvas.height];
+    /* (commented these out since I'm not updating them on the fly)
+    uniforms.u_direction = [mousePos.x, mousePos.y]; // vector setting the direction of the movement
+    uniforms.u_depth = Math.sin(time/200) * 100 //wobbly mountains
+    u_lightColor: [1, 1, 1]; //color of spotlight in RGB
+    u_ambientLightColor: [1; 1, 1], //ambient light color in RGB
+    u_ambientIntensity: 0.4; //ambient light intensity [0...1]
+    u_specularIntensity: 0.5; //specular intensity of spotlight [0...1]
+    u_scale: 1; //scale of the simplex noise
+    */
 
     gl.useProgram(shader.program);
 
